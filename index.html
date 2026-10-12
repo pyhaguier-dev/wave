@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Wave generator</title>
+
+<style>
+body{
+    font-family:Arial, sans-serif;
+    background:#202020;
+    color:white;
+    text-align:center;
+    padding:20px;
+}
+
+textarea{
+    width:90%;
+    max-width:1000px;
+    height:120px;
+    font-size:18px;
+    padding:10px;
+}
+
+button{
+    font-size:20px;
+    padding:10px 25px;
+    margin:10px;
+    cursor:pointer;
+}
+
+#status{
+    margin-top:15px;
+    color:#00ff88;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Square Wave Frequency Mixer</h2>
+
+<p>
+Enter up to 50 frequencies separated by commas:
+</p>
+
+<textarea id="freqs">
+5170,3000,2720,2489,1800,1600,1550,1500,880,832,802,787,776,727,666,650,646,600,465,190,95,47.5,20,7.83,10000
+
+</textarea>
+
+<br>
+
+<button onclick="playFrequencies()">PLAY</button>
+<button onclick="stopFrequencies()">STOP</button>
+<button onclick="exportWav()">EXPORT WAV (3 min)</button>
+
+<div id="status"></div>
+
+<script>
+
+let audioContext = null;
+let oscillators = [];
+
+function getFrequencies()
+{
+    let txt = document.getElementById("freqs").value;
+
+    let freqs = txt
+        .split(",")
+        .map(x => parseFloat(x.trim()))
+        .filter(x => !isNaN(x) && x > 0);
+
+    if(freqs.length > 50)
+    {
+        alert("Maximum 50 frequencies.");
+        return null;
+    }
+
+    return freqs;
+}
+
+function playFrequencies()
+{
+    stopFrequencies();
+
+    const freqs = getFrequencies();
+
+    if(!freqs || freqs.length === 0)
+    {
+        alert("Enter at least one valid frequency.");
+        return;
+    }
+
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    const masterGain = audioContext.createGain();
+
+    masterGain.gain.value = 0.5 / freqs.length;
+
+    masterGain.connect(audioContext.destination);
+
+    oscillators = [];
+
+    freqs.forEach(freq =>
+    {
+        const osc = audioContext.createOscillator();
+
+        osc.type = "square";
+        osc.frequency.value = freq;
+
+        osc.connect(masterGain);
+
+        osc.start();
+
+        oscillators.push(osc);
+    });
+
+    document.getElementById("status").innerText =
+        "Playing " + freqs.length + " frequencies";
+}
+
+function stopFrequencies()
+{
+    oscillators.forEach(o =>
+    {
+        try { o.stop(); } catch(e){}
+    });
+
+    oscillators = [];
+
+    if(audioContext)
+    {
+        audioContext.close();
+        audioContext = null;
+    }
+
+    document.getElementById("status").innerText =
+        "Stopped";
+}
+
+function writeString(view, offset, string)
+{
+    for(let i=0;i<string.length;i++)
+    {
+        view.setUint8(offset+i, string.charCodeAt(i));
+    }
+}
+
+function exportWav()
+{
+    const freqs = getFrequencies();
+
+    if(!freqs || freqs.length===0)
+    {
+        alert("Enter at least one valid frequency.");
+        return;
+    }
+
+    document.getElementById("status").innerText =
+        "Generating WAV...";
+
+    setTimeout(() =>
+    {
+        const sampleRate = 44100;
+        const duration = 180; // 3 minutes
+
+        const numSamples = sampleRate * duration;
+
+        const buffer = new Int16Array(numSamples);
+
+        for(let i=0;i<numSamples;i++)
+        {
+            const t = i / sampleRate;
+
+            let sample = 0;
+
+            for(let f of freqs)
+            {
+                sample += Math.sin(
+                    2*Math.PI*f*t
+                ) >= 0 ? 1 : -1;
+            }
+
+            sample /= freqs.length;
+
+            buffer[i] = sample * 32767;
+        }
+
+        const wavBuffer = new ArrayBuffer(
+            44 + buffer.length * 2
+        );
+
+        const view = new DataView(wavBuffer);
+
+        writeString(view,0,'RIFF');
+        view.setUint32(4,36 + buffer.length*2,true);
+        writeString(view,8,'WAVE');
+
+        writeString(view,12,'fmt ');
+        view.setUint32(16,16,true);
+        view.setUint16(20,1,true);
+        view.setUint16(22,1,true);
+        view.setUint32(24,sampleRate,true);
+        view.setUint32(28,sampleRate*2,true);
+        view.setUint16(32,2,true);
+        view.setUint16(34,16,true);
+
+        writeString(view,36,'data');
+        view.setUint32(40,buffer.length*2,true);
+
+        let offset = 44;
+
+        for(let i=0;i<buffer.length;i++,offset+=2)
+        {
+            view.setInt16(offset,buffer[i],true);
+        }
+
+        const blob = new Blob(
+            [view],
+            {type:'audio/wav'}
+        );
+
+        const a = document.createElement("a");
+
+        a.href = URL.createObjectURL(blob);
+
+        let filename =
+            prompt(
+                "Enter WAV filename:",
+                "frequencies.wav"
+            );
+
+        if(!filename)
+            filename = "frequencies.wav";
+
+        if(!filename.toLowerCase().endsWith(".wav"))
+            filename += ".wav";
+
+        a.download = filename;
+
+        document.body.appendChild(a);
+
+        a.click();
+
+        document.body.removeChild(a);
+
+        URL.revokeObjectURL(a.href);
+
+        document.getElementById("status").innerText =
+            "WAV exported successfully";
+    },100);
+}
+
+</script>
+
+</body>
+</html>
